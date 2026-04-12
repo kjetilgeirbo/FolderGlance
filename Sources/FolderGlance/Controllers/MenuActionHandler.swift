@@ -19,7 +19,6 @@ class MenuActionHandler: NSObject {
     }
 
     @objc func openSettings(_ sender: NSMenuItem) {
-        NSApp.activate()
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        (NSApp.delegate as? AppDelegate)?.showSettings()
     }
 }
