@@ -13,20 +13,27 @@ class StatusBarController {
     init(appState: AppState) {
         self.appState = appState
 
+        // Subscribe to future changes (skip initial value with dropFirst)
         appState.$folders
+            .dropFirst()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.rebuildStatusItems() }
             .store(in: &cancellables)
 
         appState.$showHiddenFiles
+            .dropFirst()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.rebuildStatusItems() }
             .store(in: &cancellables)
 
         appState.$groupedMenuIcon
+            .dropFirst()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.updateGroupedIcon() }
             .store(in: &cancellables)
+
+        // Build initial status items immediately
+        rebuildStatusItems()
     }
 
     func rebuildStatusItems() {
@@ -47,8 +54,14 @@ class StatusBarController {
 
         // Create separate items
         for folder in enabledFolders where folder.displayMode == .separate {
-            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-            statusItem.button?.image = NSImage(systemSymbolName: folder.icon, accessibilityDescription: folder.displayName)
+            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            if let image = NSImage(systemSymbolName: folder.icon, accessibilityDescription: folder.displayName) {
+                image.size = NSSize(width: 18, height: 18)
+                image.isTemplate = true
+                statusItem.button?.image = image
+            } else {
+                statusItem.button?.title = "📁"
+            }
             statusItem.button?.toolTip = folder.displayName
 
             let menu = NSMenu()
@@ -68,11 +81,14 @@ class StatusBarController {
         // Create grouped item if any grouped folders exist
         let groupedFolders = enabledFolders.filter { $0.displayMode == .grouped }
         if !groupedFolders.isEmpty {
-            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-            statusItem.button?.image = NSImage(
-                systemSymbolName: appState.groupedMenuIcon,
-                accessibilityDescription: "FolderGlance"
-            )
+            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            if let image = NSImage(systemSymbolName: appState.groupedMenuIcon, accessibilityDescription: "FolderGlance") {
+                image.size = NSSize(width: 18, height: 18)
+                image.isTemplate = true
+                statusItem.button?.image = image
+            } else {
+                statusItem.button?.title = "📂"
+            }
             statusItem.button?.toolTip = "FolderGlance"
 
             let menu = NSMenu()
@@ -86,11 +102,14 @@ class StatusBarController {
 
         // If no status items exist, show a default FolderGlance icon for settings access
         if separateItems.isEmpty && groupedItem == nil {
-            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-            statusItem.button?.image = NSImage(
-                systemSymbolName: "folder.badge.gearshape",
-                accessibilityDescription: "FolderGlance"
-            )
+            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            if let image = NSImage(systemSymbolName: "folder.badge.gearshape", accessibilityDescription: "FolderGlance") {
+                image.size = NSSize(width: 18, height: 18)
+                image.isTemplate = true
+                statusItem.button?.image = image
+            } else {
+                statusItem.button?.title = "FG"
+            }
             statusItem.button?.toolTip = "FolderGlance — add folders in Settings"
 
             let menu = NSMenu()
@@ -115,10 +134,11 @@ class StatusBarController {
     }
 
     private func updateGroupedIcon() {
-        groupedItem?.button?.image = NSImage(
-            systemSymbolName: appState.groupedMenuIcon,
-            accessibilityDescription: "FolderGlance"
-        )
+        if let image = NSImage(systemSymbolName: appState.groupedMenuIcon, accessibilityDescription: "FolderGlance") {
+            image.size = NSSize(width: 18, height: 18)
+            image.isTemplate = true
+            groupedItem?.button?.image = image
+        }
     }
 }
 

@@ -2,20 +2,11 @@ import AppKit
 import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    var statusBarController: StatusBarController?
     private var settingsWindow: NSWindow?
+    private var statusBarController: StatusBarController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
         statusBarController = StatusBarController(appState: AppState.shared)
-    }
-
-    func applicationShouldTerminateAfterLastWindowClosed(_ application: NSApplication) -> Bool {
-        false
-    }
-
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        .terminateNow
     }
 
     func showSettings() {

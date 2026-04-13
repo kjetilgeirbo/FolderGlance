@@ -3,7 +3,19 @@ import ObjectiveC
 
 private var delegateKey: UInt8 = 0
 
+private let maxItemsPerLevel = 50
+
+private let skippedNames: Set<String> = [
+    ".build", ".git", ".svn", ".hg",
+    "node_modules", "Pods", "DerivedData",
+    ".swiftpm", "__pycache__", ".Trash",
+    ".DS_Store", "xcuserdata"
+]
+
 enum MenuBuilder {
+
+    // MARK: - Top-level menu for a single "separate" folder
+
     static func populate(
         menu: NSMenu,
         folderURL: URL,
@@ -13,6 +25,149 @@ enum MenuBuilder {
     ) {
         menu.removeAllItems()
 
+        addFolderContents(
+            to: menu,
+            folderURL: folderURL,
+            sortOrder: sortOrder,
+            sortAscending: sortAscending,
+            showHidden: showHidden
+        )
+
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(
+            title: "Settings\u{2026}",
+            action: #selector(MenuActionHandler.openSettings(_:)),
+            keyEquivalent: ","
+        )
+        settingsItem.target = MenuActionHandler.shared
+        menu.addItem(settingsItem)
+
+        let quitItem = NSMenuItem(
+            title: "Quit FolderGlance",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        menu.addItem(quitItem)
+    }
+
+    // MARK: - Grouped menu for multiple folders
+
+    static func populateGrouped(
+        menu: NSMenu,
+        folders: [FolderModel],
+        showHidden: Bool
+    ) {
+        menu.removeAllItems()
+
+        let enabledGrouped = folders.filter { $0.isEnabled && $0.displayMode == .grouped }
+        for (index, folder) in enabledGrouped.enumerated() {
+            if index > 0 {
+                menu.addItem(.separator())
+            }
+
+            let header = NSMenuItem(title: folder.displayName, action: nil, keyEquivalent: "")
+            header.attributedTitle = NSAttributedString(
+                string: folder.displayName,
+                attributes: [.font: NSFont.boldSystemFont(ofSize: 0)]
+            )
+            header.isEnabled = false
+            menu.addItem(header)
+
+            addFolderContents(
+                to: menu,
+                folderURL: folder.url,
+                sortOrder: folder.sortOrder,
+                sortAscending: folder.sortAscending,
+                showHidden: showHidden,
+                indentationLevel: 1
+            )
+        }
+
+        menu.addItem(.separator())
+        let settingsItem = NSMenuItem(
+            title: "Settings\u{2026}",
+            action: #selector(MenuActionHandler.openSettings(_:)),
+            keyEquivalent: ","
+        )
+        settingsItem.target = MenuActionHandler.shared
+        menu.addItem(settingsItem)
+
+        let quitItem = NSMenuItem(
+            title: "Quit FolderGlance",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        menu.addItem(quitItem)
+    }
+
+    // MARK: - Submenu-only content (no Settings/Quit)
+
+    static func populateSubmenu(
+        menu: NSMenu,
+        folderURL: URL,
+        sortOrder: FolderSortOrder,
+        sortAscending: Bool,
+        showHidden: Bool
+    ) {
+        menu.removeAllItems()
+        addFolderContents(
+            to: menu,
+            folderURL: folderURL,
+            sortOrder: sortOrder,
+            sortAscending: sortAscending,
+            showHidden: showHidden
+        )
+
+        if menu.items.isEmpty {
+            let emptyItem = NSMenuItem(title: "(empty)", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            menu.addItem(emptyItem)
+        }
+    }
+
+    // MARK: - Icon with Finder label color
+
+    private static func iconForURL(_ url: URL) -> NSImage {
+        let baseIcon = NSWorkspace.shared.icon(forFile: url.path)
+        baseIcon.size = NSSize(width: 16, height: 16)
+
+        guard let values = try? url.resourceValues(forKeys: [.labelColorKey]),
+              let labelColor = values.labelColor else {
+            return baseIcon
+        }
+
+        let size = NSSize(width: 16, height: 16)
+        let composite = NSImage(size: size, flipped: false) { rect in
+            baseIcon.draw(in: rect)
+            let dotSize: CGFloat = 7
+            let dotRect = NSRect(
+                x: rect.width - dotSize - 0.5,
+                y: 0.5,
+                width: dotSize,
+                height: dotSize
+            )
+            // White outline for contrast
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: dotRect.insetBy(dx: -0.5, dy: -0.5)).fill()
+            labelColor.setFill()
+            NSBezierPath(ovalIn: dotRect).fill()
+            return true
+        }
+        composite.isTemplate = false
+        return composite
+    }
+
+    // MARK: - Shared content builder
+
+    private static func addFolderContents(
+        to menu: NSMenu,
+        folderURL: URL,
+        sortOrder: FolderSortOrder,
+        sortAscending: Bool,
+        showHidden: Bool,
+        indentationLevel: Int = 0
+    ) {
         let contents = directoryContents(
             at: folderURL,
             sortOrder: sortOrder,
@@ -20,27 +175,30 @@ enum MenuBuilder {
             showHidden: showHidden
         )
 
-        let folders = contents.filter { $0.hasDirectoryPath }
-        let files = contents.filter { !$0.hasDirectoryPath }
+        let capped = Array(contents.prefix(maxItemsPerLevel))
+        let wasCapped = contents.count > maxItemsPerLevel
 
-        // Folders first — each with a submenu
-        for folderURL in folders {
-            let name = folderURL.lastPathComponent
+        let folders = capped.filter { $0.hasDirectoryPath }
+        let files = capped.filter { !$0.hasDirectoryPath }
+
+        // Folders first — each with a lazy submenu
+        for url in folders {
+            let name = url.lastPathComponent
             let item = NSMenuItem(title: name, action: nil, keyEquivalent: "")
-            item.image = NSWorkspace.shared.icon(forFile: folderURL.path)
-            item.image?.size = NSSize(width: 16, height: 16)
+            item.image = iconForURL(url)
+            item.indentationLevel = indentationLevel
 
             let submenu = NSMenu(title: name)
             let delegate = FolderMenuDelegate(
-                folderURL: folderURL,
+                folderURL: url,
                 sortOrder: sortOrder,
                 sortAscending: sortAscending,
                 showHidden: showHidden
             )
             objc_setAssociatedObject(submenu, &delegateKey, delegate, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             submenu.delegate = delegate
-            // Add a placeholder so the submenu arrow appears
-            submenu.addItem(NSMenuItem(title: "Loading…", action: nil, keyEquivalent: ""))
+            // Placeholder so macOS shows the submenu arrow
+            submenu.addItem(NSMenuItem(title: "Loading\u{2026}", action: nil, keyEquivalent: ""))
             item.submenu = submenu
 
             menu.addItem(item)
@@ -51,10 +209,11 @@ enum MenuBuilder {
                 action: #selector(MenuActionHandler.openFolder(_:)),
                 keyEquivalent: ""
             )
-            altItem.representedObject = folderURL
+            altItem.representedObject = url
             altItem.target = MenuActionHandler.shared
             altItem.isAlternate = true
             altItem.keyEquivalentModifierMask = .option
+            altItem.indentationLevel = indentationLevel
             menu.addItem(altItem)
         }
 
@@ -72,8 +231,8 @@ enum MenuBuilder {
             )
             item.representedObject = fileURL
             item.target = MenuActionHandler.shared
-            item.image = NSWorkspace.shared.icon(forFile: fileURL.path)
-            item.image?.size = NSSize(width: 16, height: 16)
+            item.image = iconForURL(fileURL)
+            item.indentationLevel = indentationLevel
             menu.addItem(item)
 
             // Alternate: option-click reveals in Finder
@@ -86,131 +245,23 @@ enum MenuBuilder {
             altItem.target = MenuActionHandler.shared
             altItem.isAlternate = true
             altItem.keyEquivalentModifierMask = .option
+            altItem.indentationLevel = indentationLevel
             menu.addItem(altItem)
         }
 
-        menu.addItem(.separator())
-
-        let settingsItem = NSMenuItem(
-            title: "Settings…",
-            action: #selector(MenuActionHandler.openSettings(_:)),
-            keyEquivalent: ","
-        )
-        settingsItem.target = MenuActionHandler.shared
-        menu.addItem(settingsItem)
-
-        let quitItem = NSMenuItem(
-            title: "Quit FolderGlance",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        )
-        menu.addItem(quitItem)
-    }
-
-    static func populateGrouped(
-        menu: NSMenu,
-        folders: [FolderModel],
-        showHidden: Bool
-    ) {
-        menu.removeAllItems()
-
-        let enabledGrouped = folders.filter { $0.isEnabled && $0.displayMode == .grouped }
-        for (index, folder) in enabledGrouped.enumerated() {
-            if index > 0 {
-                menu.addItem(.separator())
-            }
-            // Section header
-            let header = NSMenuItem(title: folder.displayName, action: nil, keyEquivalent: "")
-            header.attributedTitle = NSAttributedString(
-                string: folder.displayName,
-                attributes: [.font: NSFont.boldSystemFont(ofSize: 0)]
+        // "Show All in Finder" when items were capped
+        if wasCapped {
+            menu.addItem(.separator())
+            let moreItem = NSMenuItem(
+                title: "Show All in Finder (\(contents.count) items)",
+                action: #selector(MenuActionHandler.openFolder(_:)),
+                keyEquivalent: ""
             )
-            header.isEnabled = false
-            menu.addItem(header)
-
-            let contents = directoryContents(
-                at: folder.url,
-                sortOrder: folder.sortOrder,
-                ascending: folder.sortAscending,
-                showHidden: showHidden
-            )
-
-            for url in contents {
-                if url.hasDirectoryPath {
-                    let name = url.lastPathComponent
-                    let item = NSMenuItem(title: name, action: nil, keyEquivalent: "")
-                    item.image = NSWorkspace.shared.icon(forFile: url.path)
-                    item.image?.size = NSSize(width: 16, height: 16)
-                    item.indentationLevel = 1
-
-                    let submenu = NSMenu(title: name)
-                    let delegate = FolderMenuDelegate(
-                        folderURL: url,
-                        sortOrder: folder.sortOrder,
-                        sortAscending: folder.sortAscending,
-                        showHidden: showHidden
-                    )
-                    objc_setAssociatedObject(submenu, &delegateKey, delegate, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-                    submenu.delegate = delegate
-                    submenu.addItem(NSMenuItem(title: "Loading…", action: nil, keyEquivalent: ""))
-                    item.submenu = submenu
-                    menu.addItem(item)
-
-                    let altItem = NSMenuItem(
-                        title: "Open \"\(name)\" in Finder",
-                        action: #selector(MenuActionHandler.openFolder(_:)),
-                        keyEquivalent: ""
-                    )
-                    altItem.representedObject = url
-                    altItem.target = MenuActionHandler.shared
-                    altItem.isAlternate = true
-                    altItem.keyEquivalentModifierMask = .option
-                    altItem.indentationLevel = 1
-                    menu.addItem(altItem)
-                } else {
-                    let name = url.lastPathComponent
-                    let item = NSMenuItem(
-                        title: name,
-                        action: #selector(MenuActionHandler.openFile(_:)),
-                        keyEquivalent: ""
-                    )
-                    item.representedObject = url
-                    item.target = MenuActionHandler.shared
-                    item.image = NSWorkspace.shared.icon(forFile: url.path)
-                    item.image?.size = NSSize(width: 16, height: 16)
-                    item.indentationLevel = 1
-                    menu.addItem(item)
-
-                    let altItem = NSMenuItem(
-                        title: "Reveal \"\(name)\" in Finder",
-                        action: #selector(MenuActionHandler.revealInFinder(_:)),
-                        keyEquivalent: ""
-                    )
-                    altItem.representedObject = url
-                    altItem.target = MenuActionHandler.shared
-                    altItem.isAlternate = true
-                    altItem.keyEquivalentModifierMask = .option
-                    altItem.indentationLevel = 1
-                    menu.addItem(altItem)
-                }
-            }
+            moreItem.representedObject = folderURL
+            moreItem.target = MenuActionHandler.shared
+            moreItem.indentationLevel = indentationLevel
+            menu.addItem(moreItem)
         }
-
-        menu.addItem(.separator())
-        let settingsItem = NSMenuItem(
-            title: "Settings…",
-            action: #selector(MenuActionHandler.openSettings(_:)),
-            keyEquivalent: ","
-        )
-        settingsItem.target = MenuActionHandler.shared
-        menu.addItem(settingsItem)
-
-        let quitItem = NSMenuItem(
-            title: "Quit FolderGlance",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        )
-        menu.addItem(quitItem)
     }
 
     // MARK: - Directory Reading
@@ -229,8 +280,10 @@ enum MenuBuilder {
             return []
         }
 
-        let folders = contents.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
-        let files = contents.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true }
+        let filtered = contents.filter { !skippedNames.contains($0.lastPathComponent) }
+
+        let folders = filtered.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        let files = filtered.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true }
 
         let sortedFolders = sort(urls: folders, by: sortOrder, ascending: ascending)
         let sortedFiles = sort(urls: files, by: sortOrder, ascending: ascending)
@@ -277,7 +330,7 @@ class FolderMenuDelegate: NSObject, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        MenuBuilder.populate(
+        MenuBuilder.populateSubmenu(
             menu: menu,
             folderURL: folderURL,
             sortOrder: sortOrder,
