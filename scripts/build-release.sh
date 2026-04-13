@@ -73,10 +73,14 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
 </plist>
 PLIST
 
-# Copy app icon
+# Copy icons
 if [ -f "$PROJECT_DIR/AppIcon.icns" ]; then
     cp "$PROJECT_DIR/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
     echo "==> App icon added"
+fi
+if [ -f "$PROJECT_DIR/MenuBarIcon.png" ]; then
+    cp "$PROJECT_DIR/MenuBarIcon.png" "$APP_BUNDLE/Contents/Resources/MenuBarIcon.png"
+    echo "==> Menu bar icon added"
 fi
 
 # Ad-hoc code sign
